@@ -1,4 +1,4 @@
-from http.client import HTTPException
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import joblib
@@ -265,3 +265,59 @@ async def save_report(request: ReportRequest):
     pdf.output(report_filename)
     
     return FileResponse(report_filename, media_type='application/pdf', filename=report_filename)
+    # --- GET HISTORY ENDPOINT ---
+@app.get("/history")
+async def get_history():
+    conn = sqlite3.connect('fraud_history.db')
+    conn.row_factory = sqlite3.Row # Allows accessing columns by name
+    c = conn.cursor()
+    
+    # Fetch all records, newest first
+    c.execute("SELECT * FROM history ORDER BY id DESC")
+    rows = c.fetchall()
+    conn.close()
+    
+    return rows
+    # --- DASHBOARD STATS ENDPOINT ---
+@app.get("/dashboard-stats")
+async def get_dashboard_stats():
+    conn = sqlite3.connect('fraud_history.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    # 1. Basic Counts
+    c.execute("SELECT COUNT(*) FROM history")
+    row = c.fetchone()
+    total_scans = row[0] if row else 0
+    
+    c.execute("SELECT SUM(total_scanned) FROM history")
+    row = c.fetchone()
+    total_tx = row[0] if row and row[0] else 0
+    
+    c.execute("SELECT SUM(fraud_found_xgb) FROM history")
+    row = c.fetchone()
+    total_fraud = row[0] if row and row[0] else 0
+    
+    # 2. Graph Data: Group by Date (Take the last 7 scans/entries)
+    c.execute("SELECT scan_date, fraud_found_xgb, fraud_found_rf FROM history ORDER BY id DESC LIMIT 7")
+    rows = c.fetchall()
+    
+    # Convert to list of dicts and reverse (so it goes Old -> New)
+    graph_data = []
+    for row in rows:
+        # Simplify date to just the YYYY-MM-DD part
+        short_date = row['scan_date'].split(' ')[0] 
+        graph_data.append({
+            "name": short_date,
+            "XGBoost": row['fraud_found_xgb'],
+            "RandomForest": row['fraud_found_rf']
+        })
+    
+    conn.close()
+    
+    return {
+        "total_scans": total_scans,
+        "total_tx": total_tx,
+        "total_fraud": total_fraud,
+        "trend_data": graph_data[::-1] # Reverse so graph reads left-to-right
+    }
