@@ -110,7 +110,7 @@ def predict_fraud(transaction: Transaction, model_type: str = "RF"):
         for name, score in feature_importance
     ]
 
-# --- ASK GEMINI FOR A SUMMARY ---
+    # --- ASK GEMINI FOR A SUMMARY ---
     gemini_response = "Analysis not available."
     
     # We only ask Gemini if the prediction is FRAUD (1)
@@ -120,23 +120,26 @@ def predict_fraud(transaction: Transaction, model_type: str = "RF"):
             factors_str = ", ".join([f"{f['feature']}: {f['impact']:.2f}" for f in top_factors[:3]])
 
             prompt = f"""
-            You are a Senior Fraud Analyst at a major bank. A transaction has been flagged as HIGH RISK.
+            You are a friendly fraud analyst explaining a risky transaction to a bank manager.
             
-            Technical Indicators (SHAP values): {factors_str}
+            Key Risk Factors (SHAP Impact Values): {factors_str}
+            (Note: Higher positive values mean more likely fraud. Negative values reduce fraud likelihood.)
             
-            Based on these indicators, provide a structured response in plain English:
-            1. **Suspicious Pattern:** Briefly explain what behavior this looks like (e.g., "Account draining," "Structuring," "Rapid transfer").
-            2. **Recommended Action:** What should the bank manager do immediately? (e.g., "Call customer," "Freeze account").
+            Please explain in simple, easy-to-understand language:
             
-            Keep it under 3 sentences. Be direct and professional.
+            1. **What's happening?** Describe the suspicious behavior pattern in simple terms (avoid jargon). For example: Is the account being drained? Are there unusual transfer patterns? Is the account doing something it normally doesn't?
+            
+            2. **Why is this risky?** Explain in 1-2 sentences how this pattern indicates potential fraud. You can briefly mention how the risk factors (account balance changes, transaction amount) contribute to the fraud probability.
+            
+            3. **What should we do?** Give a clear, actionable next step (e.g., "Contact the customer immediately to verify", "Flag for manual review", "Freeze account temporarily").
+            
+            Keep your response under 150 words. Use simple, direct language that anyone can understand. Avoid technical terms like "SHAP" or "machine learning" - just explain what the data shows.
             """
             
             response = model.generate_content(prompt)
             gemini_response = response.text
         except Exception as e:
-            gemini_response = f"AI Error: {str(e)}"
-
-    # This return MUST be indented inside the function!
+            gemini_response = f"AI Error: {str(e)}"    # This return MUST be indented inside the function!
     return {
         "is_fraud": int(prediction),
         "risk_score": float(probability),
@@ -205,7 +208,8 @@ class ReportRequest(BaseModel):
     total: int
     xgb_fraud: int
     rf_fraud: int
-    top_frauds: List[dict]
+    confirmed_frauds: List[dict]
+    false_alarms: List[dict]
 
 # --- THE FIXED ENDPOINT ---
 @app.post("/save-report")
@@ -214,57 +218,160 @@ async def save_report(request: ReportRequest):
     conn = sqlite3.connect('fraud_history.db')
     c = conn.cursor()
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # We access data using request.variable_name
     c.execute("INSERT INTO history (scan_date, filename, total_scanned, fraud_found_xgb, fraud_found_rf) VALUES (?, ?, ?, ?, ?)",
               (date_str, request.filename, request.total, request.xgb_fraud, request.rf_fraud))
     conn.commit()
     conn.close()
 
-    # 2. GENERATE PDF
+    # 2. GENERATE PROFESSIONAL PDF REPORT
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.set_left_margin(10)
+    pdf.set_right_margin(10)
+    pdf.set_font("Arial", size=11)
     
-    # Title
+    # --- HEADER WITH DATE ---
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="FraudSentry Audit Report", ln=True, align='C')
-    pdf.ln(10)
+    pdf.cell(190, 10, txt="FraudSentry Audit Report", ln=True, align='C')
     
-    # Summary Section
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Scan Date: {date_str}", ln=True)
-    pdf.cell(200, 10, txt=f"File Name: {request.filename}", ln=True)
-    pdf.cell(200, 10, txt=f"Total Transactions Scanned: {request.total}", ln=True)
-    pdf.cell(200, 10, txt=f"High Risk Detected (XGB): {request.xgb_fraud}", ln=True)
+    # Date at top
+    pdf.set_font("Arial", size=9)
+    date_formatted = datetime.now().strftime("%A, %d %b %Y")  # e.g., "Thursday, 18 Dec 2025"
+    pdf.cell(190, 6, txt=date_formatted, ln=True, align='C')
+    pdf.ln(3)
     
-    pdf.ln(10)
+    # --- SUMMARY BOX - COMPACT ---
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_fill_color(200, 220, 240)  # Light blue background
+    pdf.cell(190, 7, txt="SCAN SUMMARY", ln=True, align='L', fill=True, border=1)
     
-    # Table of Top Risks
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Top High-Risk Transactions Detected:", ln=True)
+    pdf.set_font("Arial", size=9)
+    pdf.set_fill_color(245, 245, 245)  # Light gray background
+    confirmed_count = len(request.confirmed_frauds)
+    pdf.cell(190, 6, txt=f"  Confirmed Frauds: {confirmed_count}  |  Total Scanned: {request.total}  |  File: {request.filename[:25]}", ln=True, fill=True, border=1)
+    pdf.ln(4)
     
-    pdf.set_font("Arial", size=10)
-    # Header
-    pdf.cell(40, 10, "Amount ($)", 1)
-    pdf.cell(50, 10, "Sender Bal", 1)
-    pdf.cell(30, 10, "Risk Score", 1)
-    pdf.ln()
-    
-    # Rows (Loop through the list inside the request)
-    for row in request.top_frauds[:10]: 
-        pdf.cell(40, 10, str(row['amount']), 1)
-        pdf.cell(50, 10, str(row['oldbalanceOrg']), 1)
-        # Handle cases where Risk Score might be missing or 0
-        score = row.get('XGB_Risk_Score', 0)
-        pdf.cell(30, 10, f"{score:.2f}", 1)
+    # --- TABLE 1: CONFIRMED FRAUDS (RED TITLE) ---
+    if request.confirmed_frauds:
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_text_color(220, 20, 20)  # Red color
+        pdf.cell(200, 10, txt="TABLE 1: CONFIRMED FRAUD TRANSACTIONS", ln=True)
+        pdf.set_text_color(0, 0, 0)  # Reset to black
+        
+        # Table headers - optimized column widths
+        pdf.set_font("Arial", 'B', 8)
+        pdf.set_fill_color(220, 20, 20)  # Red background
+        pdf.set_text_color(255, 255, 255)  # White text
+        
+        col_widths = [20, 20, 18, 22, 30]  # Tighter widths, reduced Reason column
+        headers = ["Amount", "Sender Bal", "Risk", "Status", "Reason"]
+        for i, header in enumerate(headers):
+            pdf.cell(col_widths[i], 7, txt=header, border=1, align='C', fill=True)
         pdf.ln()
-
+        
+        # Table rows
+        pdf.set_font("Arial", size=7)
+        pdf.set_text_color(0, 0, 0)  # Reset to black
+        pdf.set_fill_color(255, 240, 240)  # Light red background
+        
+        for row in request.confirmed_frauds[:20]:
+            amount = f"${row.get('amount', 0):.0f}"
+            sender_bal = f"${row.get('oldbalanceOrg', 0):.0f}"
+            risk_score = f"{row.get('XGB_Risk_Score', 0):.2f}"
+            status = "HIGH PRIORITY" if row.get('RF_Prediction') == 1 else "WARNING"
+            reason = generate_fraud_reason(row)[:15]  # Truncate to 15 chars
+            
+            pdf.cell(col_widths[0], 6, txt=amount, border=1, fill=True, align='R')
+            pdf.cell(col_widths[1], 6, txt=sender_bal, border=1, fill=True, align='R')
+            pdf.cell(col_widths[2], 6, txt=risk_score, border=1, fill=True, align='C')
+            pdf.cell(col_widths[3], 6, txt=status, border=1, fill=True, align='C')
+            pdf.cell(col_widths[4], 6, txt=reason, border=1, fill=True, align='L')
+            pdf.ln()
+        
+        pdf.ln(4)
+    
+    # --- TABLE 2: FALSE ALARMS (ORANGE TITLE) ---
+    if request.false_alarms:
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_text_color(245, 130, 0)  # Orange color
+        pdf.cell(200, 10, txt="TABLE 2: FALSE ALARM CANDIDATES (ANALYST REVIEWED)", ln=True)
+        pdf.set_text_color(0, 0, 0)  # Reset to black
+        
+        # Table headers - optimized column widths
+        pdf.set_font("Arial", 'B', 8)
+        pdf.set_fill_color(245, 130, 0)  # Orange background
+        pdf.set_text_color(255, 255, 255)  # White text
+        
+        col_widths = [20, 20, 18, 18, 34]  # Tighter widths
+        headers = ["Amount", "Sender Bal", "Risk", "XGB", "Analyst Notes"]
+        for i, header in enumerate(headers):
+            pdf.cell(col_widths[i], 7, txt=header, border=1, align='C', fill=True)
+        pdf.ln()
+        
+        # Table rows
+        pdf.set_font("Arial", size=7)
+        pdf.set_text_color(0, 0, 0)  # Reset to black
+        pdf.set_fill_color(255, 250, 240)  # Light orange background
+        
+        for row in request.false_alarms[:20]:
+            amount = f"${row.get('amount', 0):.0f}"
+            sender_bal = f"${row.get('oldbalanceOrg', 0):.0f}"
+            risk_score = f"{row.get('XGB_Risk_Score', 0):.2f}"
+            xgb_flag = "Yes" if row.get('XGB_Prediction') == 1 else "No"
+            notes = "Reviewed & Cleared"
+            
+            pdf.cell(col_widths[0], 6, txt=amount, border=1, fill=True, align='R')
+            pdf.cell(col_widths[1], 6, txt=sender_bal, border=1, fill=True, align='R')
+            pdf.cell(col_widths[2], 6, txt=risk_score, border=1, fill=True, align='C')
+            pdf.cell(col_widths[3], 6, txt=xgb_flag, border=1, fill=True, align='C')
+            pdf.cell(col_widths[4], 6, txt=notes, border=1, fill=True, align='L')
+            pdf.ln()
+        
+        pdf.ln(4)
+    
+    # --- FOOTER ---
+    pdf.set_font("Arial", 'I', 8)
+    pdf.set_text_color(128, 128, 128)
+    pdf.ln(10)
+    pdf.cell(190, 6, txt="Generated by FraudSentry - Intelligent Fraud Detection System", ln=True, align='C')
+    pdf.cell(190, 4, txt=f"Report ID: {timestamp}  |  Status: AUDIT REPORT", ln=True, align='C')
+    
     # Save PDF
-    report_filename = f"report_{date_str.replace(':', '-').replace(' ', '_')}.pdf"
+    report_filename = f"FraudSentry_Report_{timestamp}.pdf"
     pdf.output(report_filename)
     
     return FileResponse(report_filename, media_type='application/pdf', filename=report_filename)
+
+
+def generate_fraud_reason(row):
+    """Generate a user-friendly fraud reason based on transaction patterns"""
+    reasons = []
+    
+    # Check for account draining (high amount, low remaining balance)
+    if row.get('amount', 0) > 50000:
+        new_balance = row.get('newbalanceOrig', 0)
+        if new_balance < 1000:
+            return "Account Draining"
+    
+    # Check for rapid transfers (high balance change)
+    balance_change = abs(row.get('newbalanceOrig', 0) - row.get('oldbalanceOrg', 0))
+    if balance_change > 100000:
+        return "Rapid Transfer"
+    
+    # Check for unusual patterns (receiver balance spike)
+    dest_balance_change = abs(row.get('newbalanceDest', 0) - row.get('oldbalanceDest', 0))
+    if dest_balance_change > 150000:
+        return "Unusual Recipient"
+    
+    # Check for structuring (multiple moderate transfers)
+    if 10000 < row.get('amount', 0) < 50000:
+        if row.get('oldbalanceOrg', 0) > row.get('newbalanceOrig', 0):
+            return "Structuring Pattern"
+    
+    # Default reason
+    return "Anomalous Activity"
     # --- GET HISTORY ENDPOINT ---
 @app.get("/history")
 async def get_history():
