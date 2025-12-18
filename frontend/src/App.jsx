@@ -99,29 +99,23 @@ function DashboardView() {
       <div className="dashboard-header">
         <div className="greeting-section">
           <h1 className="greeting-title">Welcome back, Aisyah 👋</h1>
-          <p className="greeting-subtitle">Your fraud detection system is running smoothly. Monitor security threats in real-time.</p>
+          <p className="greeting-subtitle">Your fraud detection system is running smoothly.</p>
         </div>
       </div>
 
       {/* 1. TOP METRICS ROW */}
       <div className="metrics-grid">
         <div className="card metric-card">
-          <div className="metric-icon" style={{background: 'rgba(15, 118, 110, 0.08)'}}>
-            <span style={{fontSize: '1.8rem'}}>📊</span>
-          </div>
           <div className="metric-content">
-            <div className="metric-label">TOTAL SCANS</div>
+            <div className="metric-label">Total Scans</div>
             <div className="metric-value">{stats.total_scans}</div>
             <p className="metric-change">All-time transactions scanned</p>
           </div>
         </div>
 
         <div className="card metric-card">
-          <div className="metric-icon" style={{background: 'rgba(15, 118, 110, 0.1)'}}>
-            <span style={{fontSize: '1.8rem'}}>✅</span>
-          </div>
           <div className="metric-content">
-            <div className="metric-label">TRANSACTIONS PROCESSED</div>
+            <div className="metric-label">Transactions Processed</div>
             <div className="metric-value" style={{color: 'var(--primary-teal)'}}>
               {stats.total_tx.toLocaleString()}
             </div>
@@ -130,11 +124,8 @@ function DashboardView() {
         </div>
 
         <div className="card metric-card">
-          <div className="metric-icon" style={{background: 'rgba(220, 38, 38, 0.08)'}}>
-            <span style={{fontSize: '1.8rem'}}>⚠️</span>
-          </div>
           <div className="metric-content">
-            <div className="metric-label">THREATS DETECTED</div>
+            <div className="metric-label">Threats Detected</div>
             <div className="metric-value" style={{color: 'var(--danger)'}}>
               {stats.total_fraud.toLocaleString()}
             </div>
@@ -149,7 +140,7 @@ function DashboardView() {
         {/* LEFT: TREND GRAPH */}
         <div className="card graph-card">
           <div className="card-header">
-            <h3 className="card-title">� Fraud Detection Trend</h3>
+            <h3 className="card-title">Fraud Detection Trend</h3>
             <p className="card-subtitle">Last 7 scans comparison</p>
           </div>
           <div className="graph-container">
@@ -177,7 +168,7 @@ function DashboardView() {
         {/* RIGHT: MODEL PERFORMANCE SPECS */}
         <div className="card model-specs-card">
           <div className="card-header">
-            <h3 className="card-title">🧠 Model Intelligence</h3>
+            <h3 className="card-title">Model Intelligence</h3>
             <p className="card-subtitle">Performance benchmarks on test dataset</p>
           </div>
 
@@ -296,6 +287,7 @@ function HistoryView() {
 function DetectionView() {
   const [mode, setMode] = useState('single'); 
   const [batchTab, setBatchTab] = useState('table');
+  const [tableFilter, setTableFilter] = useState('all'); // Filter for transactions: 'all', 'fraud', 'false-alarm', 'safe'
   const [filename, setFilename] = useState(""); 
   
   // FORM & STATE
@@ -306,6 +298,7 @@ function DetectionView() {
   const [batchResults, setBatchResults] = useState(null);
   const [batchStats, setBatchStats] = useState(null);
   const [modalData, setModalData] = useState(null);
+  const [falseAlarms, setFalseAlarms] = useState(new Set()); // Track false alarms by index
 
   // LOGIC
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: parseFloat(e.target.value) || 0 });
@@ -340,154 +333,472 @@ function DetectionView() {
     setLoading(false);
   };
 
-  const analyzeRow = async (tx) => {
-    setModalData({ loading: true });
+  const analyzeRow = async (tx, rowIndex) => {
+    setModalData({ loading: true, rowIndex: rowIndex, tx: tx });
     const modelType = tx.XGB_Prediction === 1 ? "XGB" : "RF";
     try {
       const res = await axios.post(`http://127.0.0.1:8000/predict?model_type=${modelType}`, {
         amount: tx.amount, oldbalanceOrg: tx.oldbalanceOrg, newbalanceOrig: tx.newbalanceOrig, oldbalanceDest: tx.oldbalanceDest, newbalanceDest: tx.newbalanceDest
       });
-      setModalData({ loading: false, ai_text: res.data.ai_analysis, features: res.data.explanation, is_fraud: res.data.is_fraud, model: modelType });
-    } catch (e) { setModalData({ loading: false, error: "Error" }); }
+      setModalData({ loading: false, ai_text: res.data.ai_analysis, features: res.data.explanation, is_fraud: res.data.is_fraud, model: modelType, rowIndex: rowIndex, tx: tx });
+    } catch (e) { setModalData({ loading: false, error: "Error", rowIndex: rowIndex, tx: tx }); }
+  };
+
+  // Determine priority level based on model agreement
+  const getPriorityLevel = (row) => {
+    const bothAgree = row.XGB_Prediction === row.RF_Prediction;
+    const xgbOnly = row.XGB_Prediction === 1 && row.RF_Prediction === 0;
+    
+    if (bothAgree && row.XGB_Prediction === 1) {
+      return { level: 'high-priority', label: 'HIGH PRIORITY', color: '#dc2626', icon: '🚨' };
+    } else if (xgbOnly) {
+      return { level: 'warning', label: 'WARNING', color: '#f59e0b', icon: '⚠️' };
+    } else {
+      return { level: 'safe', label: 'SAFE', color: '#059669', icon: '✅' };
+    }
+  };
+
+  // Mark transaction as false alarm
+  const handleMarkFalseAlarm = (rowIndex) => {
+    const newFalseAlarms = new Set(falseAlarms);
+    newFalseAlarms.add(rowIndex);
+    setFalseAlarms(newFalseAlarms);
+    
+    // Update stats - reduce XGBoost false flags
+    setBatchStats({
+      ...batchStats,
+      xgb_flags: Math.max(0, batchStats.xgb_flags - 1)
+    });
+    
+    setModalData(null);
   };
 
   const handleDownloadReport = async () => {
     if (!batchStats) return;
     try {
+      // Separate confirmed frauds and false alarms
+      const confirmedFrauds = batchResults.filter((_, i) => !falseAlarms.has(i));
+      const falseAlarmTransactions = batchResults.filter((_, i) => falseAlarms.has(i));
+      
       const res = await axios.post('http://127.0.0.1:8000/save-report', {
-        filename: filename, total: batchStats.total_scanned, xgb_fraud: batchStats.xgb_flags, rf_fraud: batchStats.rf_flags, top_frauds: batchResults.slice(0, 10)
+        filename: filename, 
+        total: batchStats.total_scanned, 
+        xgb_fraud: batchStats.xgb_flags, 
+        rf_fraud: batchStats.rf_flags, 
+        confirmed_frauds: confirmedFrauds.slice(0, 20),
+        false_alarms: falseAlarmTransactions.slice(0, 20)
       }, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Report_${Date.now()}.pdf`);
+      link.setAttribute('download', `FraudSentry_Report_${Date.now()}.pdf`);
       document.body.appendChild(link);
       link.click();
     } catch (e) { alert("Error downloading PDF"); }
   };
 
   return (
-    <div>
-      <h1 style={{marginBottom: '30px'}}>Detection Engine</h1>
-      
-      {/* TOP TABS */}
-      <div className="page-tabs">
-        <button className={mode === 'single' ? 'active-tab' : ''} onClick={() => setMode('single')}>Single Check</button>
-        <button className={mode === 'batch' ? 'active-tab' : ''} onClick={() => setMode('batch')}>Batch Upload</button>
+    <div className="detection-container">
+      {/* HEADER SECTION */}
+      <div className="detection-header">
+        <h1 className="detection-title">Detection Engine</h1>
+        <p className="detection-subtitle">
+          Check individual transactions in real-time or upload batch files for bulk analysis. Choose the method that works best for you.
+        </p>
       </div>
 
-      {mode === 'single' && (
-        <div className="card" style={{maxWidth: '600px', padding: '30px'}}>
-          <h3 style={{marginTop: 0}}>Manual Entry</h3>
-          <div className="form-grid">
-            <input name="amount" placeholder="Amount ($)" onChange={handleChange} />
-            <input name="oldbalanceOrg" placeholder="Sender Old Balance" onChange={handleChange} />
-            <input name="newbalanceOrig" placeholder="Sender New Balance" onChange={handleChange} />
-            <input name="oldbalanceDest" placeholder="Receiver Old Balance" onChange={handleChange} />
-            <input name="newbalanceDest" placeholder="Receiver New Balance" onChange={handleChange} />
-          </div>
-          <button className="primary-btn" style={{marginTop: '20px', width: '100%'}} onClick={handleSinglePredict} disabled={loading}>
-            {loading ? "Scanning..." : "Run Analysis"}
-          </button>
+      {/* MODE TABS */}
+      <div className="detection-tabs">
+        <button 
+          className={`detection-tab ${mode === 'single' ? 'active' : ''}`} 
+          onClick={() => setMode('single')}
+        >
+          <span className="tab-icon">✓</span>
+          <span className="tab-label">Manual Check</span>
+          <span className="tab-description">Single transaction analysis</span>
+        </button>
+        <button 
+          className={`detection-tab ${mode === 'batch' ? 'active' : ''}`} 
+          onClick={() => setMode('batch')}
+        >
+          <span className="tab-icon">📁</span>
+          <span className="tab-label">Batch Upload</span>
+          <span className="tab-description">Process multiple transactions</span>
+        </button>
+      </div>
 
-          {singleResult && (
-            <div style={{marginTop: '20px', padding: '15px', borderRadius: '8px', border: singleResult.is_fraud ? '1px solid var(--danger)' : '1px solid var(--success)', background: singleResult.is_fraud ? 'rgba(220,38,38,0.08)' : 'rgba(5,150,105,0.08)'}}>
-              <h3 style={{margin: 0, color: singleResult.is_fraud ? 'var(--danger)' : 'var(--success)'}}>
-                {singleResult.is_fraud ? "🚨 FRAUD DETECTED" : "✅ Safe Transaction"}
-              </h3>
-              {singleResult.is_fraud === 1 && <p style={{marginTop: '10px'}}>{singleResult.ai_analysis}</p>}
+      {/* SINGLE MODE */}
+      {mode === 'single' && (
+        <div className="detection-mode">
+          <div className="form-container">
+            <div className="form-header">
+              <h2 className="form-title">Enter Transaction Details</h2>
+              <p className="form-description">Provide transaction information to run a fraud analysis</p>
             </div>
-          )}
+
+            <div className="form-grid-modern">
+              <div className="form-group">
+                <label className="form-label">Amount ($)</label>
+                <input 
+                  name="amount" 
+                  type="number" 
+                  placeholder="0.00" 
+                  onChange={handleChange}
+                  className="form-input"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Sender Old Balance</label>
+                <input 
+                  name="oldbalanceOrg" 
+                  type="number" 
+                  placeholder="0.00" 
+                  onChange={handleChange}
+                  className="form-input"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Sender New Balance</label>
+                <input 
+                  name="newbalanceOrig" 
+                  type="number" 
+                  placeholder="0.00" 
+                  onChange={handleChange}
+                  className="form-input"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Receiver Old Balance</label>
+                <input 
+                  name="oldbalanceDest" 
+                  type="number" 
+                  placeholder="0.00" 
+                  onChange={handleChange}
+                  className="form-input"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Receiver New Balance</label>
+                <input 
+                  name="newbalanceDest" 
+                  type="number" 
+                  placeholder="0.00" 
+                  onChange={handleChange}
+                  className="form-input"
+                />
+              </div>
+            </div>
+
+            <button 
+              className="primary-btn btn-large" 
+              onClick={handleSinglePredict} 
+              disabled={loading}
+              style={{marginTop: '30px'}}
+            >
+              {loading ? "🔍 Analyzing..." : "Run Fraud Analysis"}
+            </button>
+
+            {singleResult && (
+              <div className={`result-card ${singleResult.is_fraud ? 'fraud' : 'safe'}`}>
+                <div className="result-header">
+                  <h3 className="result-title">
+                    {singleResult.is_fraud ? "🚨 Fraud Detected" : "Transaction Safe"}
+                  </h3>
+                </div>
+                <div className="result-content">
+                  <p className="result-status">
+                    <strong>Status:</strong> {singleResult.is_fraud ? "HIGH RISK" : "LOW RISK"}
+                  </p>
+                  {singleResult.is_fraud === 1 && (
+                    <div className="result-analysis">
+                      <strong>Analysis:</strong>
+                      <p>{singleResult.ai_analysis}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
+      {/* BATCH MODE */}
       {mode === 'batch' && (
-        <div className="card" style={{padding: '30px'}}>
-           <div className="upload-zone" style={{border: '2px dashed #262626', padding: '40px', textAlign: 'center', borderRadius: '8px'}}>
-             <input type="file" accept=".csv" onChange={handleFileChange} style={{display: 'none'}} id="file-upload"/>
-             <label htmlFor="file-upload" style={{cursor: 'pointer', display: 'block'}}>
-                <span style={{fontSize: '3rem'}}>📂</span>
-                <p>Click to upload transaction CSV</p>
-             </label>
-             {file && <p style={{color: 'var(--primary-teal)'}}>Selected: {file.name}</p>}
-             <button className="primary-btn" onClick={handleBatchUpload} disabled={loading} style={{marginTop: '10px'}}>
-               {loading ? "Processing..." : "Start Batch Scan"}
-             </button>
-           </div>
+        <div className="detection-mode">
+          <div className="upload-container">
+            <div className="upload-zone card">
+              <div className="upload-content">
+                <div className="upload-icon">📂</div>
+                <h2 className="upload-title">Upload CSV File</h2>
+                <p className="upload-description">Drag and drop your CSV file or click to select</p>
+                
+                <input 
+                  type="file" 
+                  accept=".csv" 
+                  onChange={handleFileChange} 
+                  style={{display: 'none'}} 
+                  id="file-upload"
+                />
+                
+                <label htmlFor="file-upload" className="upload-button">
+                  Choose File
+                </label>
 
-           {batchResults && (
-             <div style={{marginTop: '30px'}}>
-               <div className="page-tabs">
-                 <button className={batchTab === 'table' ? 'active-tab' : ''} onClick={() => setBatchTab('table')}>Live Transactions</button>
-                 <button className={batchTab === 'comparison' ? 'active-tab' : ''} onClick={() => setBatchTab('comparison')}>Model Consensus</button>
-               </div>
+                {file && (
+                  <div className="file-selected">
+                    <p className="file-name">✓ {file.name}</p>
+                  </div>
+                )}
 
-               {batchTab === 'table' && (
-                 <table style={{width: '100%', borderCollapse: 'collapse'}}>
-                   <thead>
-                     <tr>
-                       <th style={{padding: '12px', textAlign: 'left'}}>Amount</th>
-                       <th style={{padding: '12px', textAlign: 'left'}}>Sender Bal</th>
-                       <th style={{padding: '12px', textAlign: 'left'}}>Risk Score</th>
-                       <th style={{padding: '12px', textAlign: 'left'}}>Status</th>
-                       <th style={{padding: '12px', textAlign: 'left'}}>Action</th>
-                     </tr>
-                   </thead>
-                   <tbody>
-                     {batchResults.map((row, i) => (
-                       <tr key={i} className={row.XGB_Prediction === 1 ? 'row-fraud' : 'row-safe'}>
-                         <td style={{padding: '12px'}}>${row.amount}</td>
-                         <td style={{padding: '12px'}}>${row.oldbalanceOrg}</td>
-                         <td style={{padding: '12px'}}>{row.XGB_Risk_Score?.toFixed(2)}</td>
-                         <td style={{padding: '12px'}}>{row.XGB_Prediction === 1 ? <span style={{color: '#ef4444', fontWeight: 'bold'}}>High Risk</span> : <span style={{color: '#22c55e'}}>Safe</span>}</td>
-                         <td style={{padding: '12px'}}><button onClick={() => analyzeRow(row)} style={{background: 'none', border: '1px solid var(--primary-teal)', color: 'var(--primary-teal)', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer'}}>Analyze</button></td>
-                       </tr>
-                     ))}
-                   </tbody>
-                 </table>
-               )}
+                <button 
+                  className="primary-btn btn-large" 
+                  onClick={handleBatchUpload} 
+                  disabled={loading || !file}
+                  style={{marginTop: '20px'}}
+                >
+                  {loading ? "⏳ Processing..." : "Start Batch Scan"}
+                </button>
+              </div>
+            </div>
 
-               {batchTab === 'comparison' && (
-                 <>
-                  <div className="comparison-grid" style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px'}}>
-                    <div style={{background: '#171717', padding: '20px', borderRadius: '8px', border: '1px solid #262626'}}>
-                      <h4>🌲 Random Forest</h4>
-                      <h2 style={{fontSize: '2rem', color: 'var(--primary-teal)'}}>{batchStats.rf_flags}</h2>
+            {batchResults && (
+              <div className="batch-results">
+                <div className="results-tabs">
+                  <button 
+                    className={`results-tab ${batchTab === 'table' ? 'active' : ''}`}
+                    onClick={() => setBatchTab('table')}
+                  >
+                    Live Transactions
+                  </button>
+                  <button 
+                    className={`results-tab ${batchTab === 'comparison' ? 'active' : ''}`}
+                    onClick={() => setBatchTab('comparison')}
+                  >
+                    Model Consensus
+                  </button>
+                </div>
+
+                {batchTab === 'table' && (
+                  <div className="results-table-container">
+                    {/* Filter Dropdown */}
+                    <div style={{marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px'}}>
+                      <label style={{fontWeight: '600', color: 'var(--text-main)', fontSize: '0.95rem'}}>Filter by Status:</label>
+                      <select 
+                        value={tableFilter}
+                        onChange={(e) => setTableFilter(e.target.value)}
+                        style={{
+                          padding: '10px 16px',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '8px',
+                          background: 'var(--bg-dark)',
+                          color: 'var(--text-main)',
+                          fontSize: '0.95rem',
+                          fontFamily: 'Poppins, sans-serif',
+                          fontWeight: '500',
+                          cursor: 'pointer',
+                          transition: 'all 200ms ease',
+                          boxShadow: 'var(--shadow-sm)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.borderColor = 'var(--primary-teal)';
+                          e.target.style.boxShadow = '0 0 0 3px rgba(15, 118, 110, 0.1)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.borderColor = 'var(--border-color)';
+                          e.target.style.boxShadow = 'var(--shadow-sm)';
+                        }}
+                      >
+                        <option value="all">All Transactions ({batchResults.length})</option>
+                        <option value="fraud">🚨 Confirmed Frauds ({batchResults.filter((_, i) => !falseAlarms.has(i) && (getPriorityLevel(batchResults[i]).level === 'high-priority' || getPriorityLevel(batchResults[i]).level === 'warning')).length})</option>
+                        <option value="false-alarm">⚠️ False Alarms ({batchResults.filter((_, i) => falseAlarms.has(i)).length})</option>
+                        <option value="safe">✅ Safe ({batchResults.filter((_, i) => !falseAlarms.has(i) && getPriorityLevel(batchResults[i]).level === 'safe').length})</option>
+                      </select>
                     </div>
-                    <div style={{background: '#171717', padding: '20px', borderRadius: '8px', border: '1px solid #262626'}}>
-                      <h4>🚀 XGBoost</h4>
-                      <h2 style={{fontSize: '2rem', color: '#ef4444'}}>{batchStats.xgb_flags}</h2>
+
+                    {/* Table */}
+                    <table className="results-table">
+                      <thead>
+                        <tr>
+                          <th>Amount</th>
+                          <th>Sender Balance</th>
+                          <th>Risk Score</th>
+                          <th>Priority Level</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchResults.map((row, i) => {
+                          const priority = getPriorityLevel(row);
+                          const isFalseAlarm = falseAlarms.has(i);
+                          
+                          // Determine if row should be shown based on filter
+                          let showRow = false;
+                          if (tableFilter === 'all') showRow = true;
+                          else if (tableFilter === 'fraud' && !isFalseAlarm && (priority.level === 'high-priority' || priority.level === 'warning')) showRow = true;
+                          else if (tableFilter === 'false-alarm' && isFalseAlarm) showRow = true;
+                          else if (tableFilter === 'safe' && !isFalseAlarm && priority.level === 'safe') showRow = true;
+                          
+                          if (!showRow) return null;
+                          
+                          return (
+                            <tr key={i} className={isFalseAlarm ? 'row-false-alarm' : priority.level === 'high-priority' ? 'row-fraud' : priority.level === 'warning' ? 'row-warning' : 'row-safe'}>
+                              <td>${row.amount.toFixed(2)}</td>
+                              <td>${row.oldbalanceOrg.toFixed(2)}</td>
+                              <td>{row.XGB_Risk_Score?.toFixed(2)}</td>
+                              <td>
+                                <span className={`status-${priority.level}`} style={{color: priority.color}}>
+                                  {priority.icon} {isFalseAlarm ? 'FALSE ALARM' : priority.label}
+                                </span>
+                              </td>
+                              <td>
+                                <button 
+                                  className="action-btn"
+                                  onClick={() => analyzeRow(row, i)}
+                                >
+                                  {isFalseAlarm ? '✓ Cleared' : 'Review'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {batchTab === 'comparison' && (
+                  <div className="model-comparison">
+                    <div className="comparison-card">
+                      <h3>🌲 Random Forest</h3>
+                      <p className="comparison-stat">{batchStats.rf_flags}</p>
+                      <p className="comparison-label">Fraud Flags</p>
+                    </div>
+                    <div className="comparison-card">
+                      <h3>🚀 XGBoost</h3>
+                      <p className="comparison-stat">{batchStats.xgb_flags}</p>
+                      <p className="comparison-label">Fraud Flags</p>
+                    </div>
+                    <div className="comparison-card">
+                      <h3>✓ Total Scanned</h3>
+                      <p className="comparison-stat">{batchStats.total_scanned}</p>
+                      <p className="comparison-label">Transactions</p>
                     </div>
                   </div>
-                  <button className="primary-btn" style={{marginTop: '20px', width: '100%'}} onClick={handleDownloadReport}>Download Audit PDF</button>
-                 </>
-               )}
-             </div>
-           )}
+                )}
+
+                <button 
+                  className="primary-btn btn-large"
+                  onClick={handleDownloadReport}
+                  style={{marginTop: '30px', width: '100%'}}
+                >
+                  📄 Download Audit PDF
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {/* MODAL */}
       {modalData && (
-        <div className="modal-overlay" onClick={() => setModalData(null)} style={{position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.8)', display:'flex', alignItems:'center', justifyContent:'center'}}>
-          <div className="card" onClick={e => e.stopPropagation()} style={{width: '500px', padding: '30px', position: 'relative'}}>
-            <h2>🤖 AI Analysis</h2>
-            {modalData.loading ? <p>Thinking...</p> : (
-               <>
-                <div style={{background: '#262626', padding: '15px', borderRadius: '6px', borderLeft: '4px solid var(--primary-teal)', marginBottom: '20px'}}>
-                  {modalData.ai_text}
+        <div className="modal-overlay" onClick={() => setModalData(null)} style={{position: 'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex: 1000}}>
+          <div className="card" onClick={e => e.stopPropagation()} style={{width: '520px', maxHeight: '85vh', overflow: 'auto', padding: '0', position: 'relative', borderRadius: '12px', boxShadow: '0 20px 60px rgba(0,0,0,0.15)'}}>
+            
+            {/* Modal Header */}
+            <div style={{background: 'linear-gradient(135deg, var(--primary-teal) 0%, #0d9488 100%)', padding: '28px', borderRadius: '12px 12px 0 0', color: 'white', borderBottom: '3px solid rgba(185, 104, 104, 0.1)'}}>
+              <h2 style={{margin: '0 0 6px 0', fontSize: '1.4rem', fontWeight: '700'}}>AI Analysis Report</h2>
+              <p style={{margin: '0', fontSize: '0.9rem', opacity: 0.95}}>Detailed fraud assessment & risk factors</p>
+            </div>
+
+            {/* Modal Content */}
+            <div style={{padding: '28px'}}>
+              {modalData.loading ? (
+                <div style={{textAlign: 'center', padding: '40px'}}>
+                  <p style={{fontSize: '1rem', color: 'var(--text-main)'}}>🔍 Analyzing transaction...</p>
                 </div>
-                <h4>Risk Contributors:</h4>
-                <ul>
-                  {modalData.features?.map((f, i) => (
-                    <li key={i} style={{marginBottom: '5px'}}>
-                      {f.feature}: <span style={{color: f.impact > 0 ? '#ef4444' : '#22c55e'}}>{f.impact.toFixed(2)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <button className="primary-btn" onClick={() => setModalData(null)} style={{width: '100%', marginTop: '20px'}}>Close</button>
-               </>
-            )}
+              ) : (
+                 <>
+                  {/* AI Analysis Section */}
+                  <div style={{marginBottom: '28px'}}>
+                    <h3 style={{fontSize: '1rem', fontWeight: '600', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <span style={{fontSize: '1.2rem'}}>💡</span> Expert Assessment
+                    </h3>
+                    <div style={{background: 'linear-gradient(135deg, rgba(15, 118, 110, 0.08) 0%, rgba(13, 148, 136, 0.04) 100%)', padding: '16px', borderRadius: '10px', borderLeft: '4px solid var(--primary-teal)', lineHeight: '1.8', color: 'var(--text-main)', fontSize: '0.95rem'}}>
+                      <p style={{margin: '0', whiteSpace: 'pre-wrap', wordWrap: 'break-word'}}>
+                        {modalData.ai_text}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Risk Contributors Section */}
+                  <div style={{marginBottom: '28px'}}>
+                    <h3 style={{fontSize: '1rem', fontWeight: '600', color: 'var(--text-main)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                      <span style={{fontSize: '1.2rem'}}>📊</span> Risk Factors (SHAP Analysis)
+                    </h3>
+                    <div style={{background: 'var(--bg-panel)', padding: '14px', borderRadius: '8px', marginBottom: '14px', borderLeft: '3px solid #f59e0b', fontSize: '0.85rem', lineHeight: '1.6', color: 'var(--text-muted)'}}>
+                      <strong style={{color: 'var(--text-main)'}}>What is SHAP?</strong> SHAP values measure how much each transaction detail (like amount, balance changes) contributes to the fraud prediction. Positive values increase fraud risk, negative values decrease it.
+                    </div>
+                    <ul style={{listStyle: 'none', padding: 0, margin: 0}}>
+                      {modalData.features?.map((f, i) => (
+                        <li key={i} style={{marginBottom: '10px', padding: '14px', background: 'var(--bg-panel)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', border: '1px solid rgba(15, 118, 110, 0.1)', transition: 'all 200ms ease'}}>
+                          <div style={{flex: 1}}>
+                            <div style={{color: 'var(--text-main)', fontSize: '0.95rem', fontWeight: '500', marginBottom: '4px'}}>{f.feature}</div>
+                            <div style={{color: 'var(--text-muted)', fontSize: '0.85rem'}}>
+                              {f.impact > 0 ? '⬆️ Increases fraud risk' : '⬇️ Decreases fraud risk'}
+                            </div>
+                          </div>
+                          <span style={{color: f.impact > 0 ? '#ef4444' : '#22c55e', fontWeight: '700', fontSize: '1rem', padding: '6px 12px', background: f.impact > 0 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(34, 197, 94, 0.12)', borderRadius: '6px', whiteSpace: 'nowrap', marginLeft: '12px'}}>
+                            {f.impact > 0 ? '+' : ''}{f.impact.toFixed(2)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Confidence Section */}
+                  {modalData.is_fraud === 1 ? (
+                    <div style={{background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.08) 0%, rgba(220, 38, 38, 0.04) 100%)', padding: '16px', borderRadius: '10px', borderLeft: '4px solid var(--danger)', marginBottom: '24px'}}>
+                      <h4 style={{margin: '0 0 8px 0', fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-main)'}}>⚠️ Assessment Result</h4>
+                      <p style={{margin: '0', fontSize: '0.95rem', color: 'var(--text-main)', lineHeight: '1.6'}}>
+                        This transaction has been flagged as <strong>HIGH RISK</strong> based on multiple suspicious indicators. Immediate review and customer verification are recommended.
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.08) 0%, rgba(5, 150, 105, 0.04) 100%)', padding: '16px', borderRadius: '10px', borderLeft: '4px solid var(--success)', marginBottom: '24px'}}>
+                      <h4 style={{margin: '0 0 8px 0', fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-main)'}}>✅ Assessment Result</h4>
+                      <p style={{margin: '0', fontSize: '0.95rem', color: 'var(--text-main)', lineHeight: '1.6'}}>
+                        This transaction appears <strong>SAFE</strong> and shows normal behavior patterns. No suspicious indicators detected. You can proceed with confidence.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Close Button */}
+                  <div style={{display: 'flex', gap: '12px'}}>
+                    {/* Show "Mark as False Alarm" button for WARNING level transactions (XGBoost only) */}
+                    {modalData.tx && modalData.tx.XGB_Prediction === 1 && modalData.tx.RF_Prediction === 0 && (
+                      <button 
+                        className="primary-btn" 
+                        onClick={() => handleMarkFalseAlarm(modalData.rowIndex)}
+                        style={{flex: 1, padding: '12px', fontSize: '0.95rem', fontWeight: '600', background: '#f59e0b'}}
+                      >
+                        ✓ Mark as False Alarm
+                      </button>
+                    )}
+                    <button 
+                      className="primary-btn" 
+                      onClick={() => setModalData(null)} 
+                      style={{flex: 1, padding: '12px', fontSize: '0.95rem', fontWeight: '600'}}
+                    >
+                      Close
+                    </button>
+                  </div>
+                 </>
+              )}
+            </div>
           </div>
         </div>
       )}
