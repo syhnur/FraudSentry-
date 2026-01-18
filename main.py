@@ -20,13 +20,13 @@ from typing import List
 load_dotenv() # Load environment variables from .env file
 app = FastAPI(title="FraudSentry API")
 
-# ... app = FastAPI(...)
+
 
 # INITIALIZE DATABASE
 def init_db():
     conn = sqlite3.connect('fraud_history.db')
     c = conn.cursor()
-    # Create table if not exists
+
     c.execute('''
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +49,7 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
-# CHANGED TO GEMINI 2.5 FLASH (Faster & Cheaper)
+
 model = genai.GenerativeModel('gemini-2.5-flash')
 # 2. CORS (So React can talk to Python)
 app.add_middleware(
