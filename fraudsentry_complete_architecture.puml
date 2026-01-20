@@ -1,0 +1,246 @@
+@startuml FraudSentry_Complete_Architecture
+!theme plain
+skinparam linetype ortho
+skinparam backgroundColor #FEFEFE
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #343A40
+skinparam arrowColor #495057
+skinparam packageStyle rectangle
+
+title FraudSentry - Complete System Architecture
+
+' ============================================================================
+' FRONTEND LAYER
+' ============================================================================
+package "Frontend Layer (React + Vite)" #F3E5F5 {
+    
+    class "React Application" as ReactApp {
+        Authentication
+        Dashboard
+        Detection Engine
+        History Viewer
+        --
+        +handleLogin()
+        +handleLogout()
+        +renderViews()
+    }
+    
+    class "UI Components" as UIComponents {
+        InventoryLogin
+        DashboardView
+        DetectionView
+        HistoryView
+        FraudTypeBreakdown
+        ModelComparisonCards
+        SystemHealthStatus
+    }
+    
+    class "HTTP Client" as HTTPClient {
+        +baseURL: localhost:8000
+        --
+        +post(endpoint, data)
+        +get(endpoint)
+    }
+}
+
+' ============================================================================
+' API LAYER
+' ============================================================================
+package "API Layer (FastAPI)" #E3F2FD {
+    
+    class "FastAPI Server" as FastAPI {
+        CORS Middleware
+        --
+        +/predict
+        +/upload-batch
+        +/save-report
+        +/history
+        +/dashboard-stats
+        +/health
+        +/fraud-type-stats
+    }
+    
+    class "Request Models" as RequestModels {
+        Transaction
+        ReportRequest
+        --
+        Pydantic validation
+    }
+    
+    class "Fraud Detection Service" as FraudService {
+        +detect_account_takeover()
+        +detect_mule_account()
+        +detect_structuring()
+        +generate_fraud_reason()
+    }
+}
+
+' ============================================================================
+' ML ENGINE
+' ============================================================================
+package "ML Engine" #FFF3E0 {
+    
+    class "Random Forest" as RF {
+        n_estimators: 100
+        class_weight: balanced
+        --
+        +predict()
+        +predict_proba()
+        --
+        <<High Precision>>
+    }
+    
+    class "XGBoost" as XGB {
+        scale_pos_weight: adjusted
+        max_depth: 6
+        --
+        +predict()
+        +predict_proba()
+        --
+        <<High Sensitivity>>
+    }
+    
+    class "Isolation Forest" as ISO {
+        --
+        +predict()
+        --
+        <<Anomaly Detection>>
+    }
+    
+    class "Ensemble Scorer" as Ensemble {
+        Weights: 0.4, 0.4, 0.2
+        Threshold: 0.5
+        --
+        +calculate_risk_score()
+        +get_consensus()
+    }
+    
+    class "SHAP Explainer" as SHAP {
+        TreeExplainer
+        --
+        +explain_prediction()
+        +get_feature_importance()
+    }
+}
+
+' ============================================================================
+' AI & SERVICES
+' ============================================================================
+package "External Services" #FCE4EC {
+    
+    class "Gemini AI" as Gemini {
+        Model: gemini-2.5-flash-lite
+        --
+        +analyze_fraud()
+        +analyze_safe()
+        +generate_explanation()
+    }
+    
+    class "PDF Generator" as PDF {
+        FPDF Library
+        --
+        +create_report()
+        +add_tables()
+        +save_file()
+    }
+}
+
+' ============================================================================
+' DATA LAYER
+' ============================================================================
+package "Data Layer" #E8F5E9 {
+    
+    class "SQLite Database" as DB {
+        fraud_history.db
+        --
+        +history table
+        +scan records
+    }
+    
+    class "Model Files" as Models {
+        fraud_model.joblib
+        fraud_model_xgboost.joblib
+        isolation_forest.joblib
+    }
+}
+
+' ============================================================================
+' RELATIONSHIPS - Frontend to API
+' ============================================================================
+ReactApp *-- UIComponents
+ReactApp --> HTTPClient : uses
+HTTPClient --> FastAPI : HTTP/REST
+
+' ============================================================================
+' RELATIONSHIPS - API Layer
+' ============================================================================
+FastAPI ..> RequestModels : validates
+FastAPI --> FraudService : delegates
+FastAPI --> Ensemble : predicts
+FastAPI --> SHAP : explains
+FastAPI --> Gemini : analyzes
+FastAPI --> PDF : generates
+FastAPI --> DB : queries
+
+' ============================================================================
+' RELATIONSHIPS - ML Engine
+' ============================================================================
+Ensemble --> RF : combines
+Ensemble --> XGB : combines
+Ensemble --> ISO : combines
+SHAP --> XGB : explains
+FraudService ..> Ensemble : uses results
+
+' ============================================================================
+' RELATIONSHIPS - Data
+' ============================================================================
+FastAPI ..> Models : loads
+RF -[hidden]- Models
+XGB -[hidden]- Models
+ISO -[hidden]- Models
+
+' ============================================================================
+' ANNOTATIONS
+' ============================================================================
+note right of Ensemble
+  **Risk Score Fusion**
+  final_risk = (XGB × 0.4) + 
+               (RF × 0.4) + 
+               (ISO × 0.2)
+  
+  **Consensus Tiers:**
+  • CRITICAL: Both agree (fraud)
+  • HIGH: RF only (precision)
+  • MODERATE: XGB only (sensitivity)
+  • LOW: Both agree (safe)
+end note
+
+note left of FraudService
+  **Fraud Patterns:**
+  • Account Takeover
+  • Mule Account
+  • Structuring
+  • Account Draining
+  • Rapid Transfer
+end note
+
+note bottom of ReactApp
+  **Authentication:**
+  • Email/Password
+  • WebAuthn (Touch ID/Face ID)
+  
+  **Features:**
+  • Single transaction scan
+  • Batch CSV processing
+  • PDF report generation
+  • Real-time health monitoring
+end note
+
+note top of Gemini
+  **Natural Language Analysis**
+  Provides conversational
+  explanations for fraud
+  detection results
+end note
+
+@enduml

@@ -1,0 +1,125 @@
+@startuml FraudSentry_Backend_API
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #343A40
+
+title FraudSentry - Backend API Architecture
+
+package "Backend API (FastAPI)" #E3F2FD {
+    
+    class FastAPIApp {
+        +title: str = "FraudSentry API"
+        +middleware: CORSMiddleware
+        --
+        +add_middleware()
+    }
+    
+    class Transaction <<Pydantic Model>> {
+        +amount: float
+        +oldbalanceOrg: float
+        +newbalanceOrig: float
+        +oldbalanceDest: float
+        +newbalanceDest: float
+    }
+    
+    class ReportRequest <<Pydantic Model>> {
+        +filename: str
+        +total: int
+        +xgb_fraud: int
+        +rf_fraud: int
+        +confirmed_frauds: List[dict]
+        +false_alarms: List[dict]
+    }
+    
+    class APIEndpoints {
+        +predict_fraud(transaction, model_type): dict
+        +upload_batch(file): dict
+        +save_report(request): FileResponse
+        +get_history(): List[dict]
+        +get_dashboard_stats(): dict
+        +health_check(): dict
+        +get_fraud_type_stats(): dict
+        --
+        -get_model_consensus(xgb_pred, rf_pred): dict
+    }
+    
+    class FraudDetectionService {
+        +detect_account_takeover(row): bool
+        +detect_mule_account(row): bool
+        +detect_structuring(row): bool
+        +detect_fraud_type_from_shap(row, shap): str
+        +generate_fraud_reason(row): str
+    }
+}
+
+package "Database Layer" #E8F5E9 {
+    class DatabaseManager {
+        +db_path: str = "fraud_history.db"
+        --
+        +init_db(): void
+        +get_connection(): Connection
+    }
+    
+    class HistoryTable {
+        +id: INTEGER PRIMARY KEY
+        +scan_date: TEXT
+        +filename: TEXT
+        +total_scanned: INTEGER
+        +fraud_found_xgb: INTEGER
+        +fraud_found_rf: INTEGER
+    }
+}
+
+package "External Services" #FCE4EC {
+    class GeminiAIService {
+        +api_key: str
+        +model: GenerativeModel
+        --
+        +configure(api_key): void
+        +generate_content(prompt): str
+        +analyze_fraud_transaction(): str
+        +analyze_safe_transaction(): str
+    }
+    
+    class PDFReportGenerator {
+        +pdf: FPDF
+        --
+        +create_report(data): void
+        +add_header(date): void
+        +add_summary_box(stats): void
+        +save(filename): void
+    }
+}
+
+' Relationships
+FastAPIApp *-- APIEndpoints
+APIEndpoints ..> Transaction : uses
+APIEndpoints ..> ReportRequest : uses
+APIEndpoints --> FraudDetectionService : delegates
+APIEndpoints --> GeminiAIService : calls
+APIEndpoints --> PDFReportGenerator : generates
+APIEndpoints --> DatabaseManager : queries
+DatabaseManager *-- HistoryTable
+
+note right of APIEndpoints
+  **7 REST Endpoints:**
+  • /predict - Single transaction
+  • /upload-batch - CSV processing
+  • /save-report - PDF generation
+  • /history - Scan records
+  • /dashboard-stats - Metrics
+  • /health - System status
+  • /fraud-type-stats - Distribution
+end note
+
+note right of FraudDetectionService
+  **Fraud Patterns:**
+  • Account Takeover (ATO)
+  • Mule Account
+  • Structuring
+  • Account Draining
+  • Rapid Transfer
+end note
+
+@enduml

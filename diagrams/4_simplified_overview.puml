@@ -1,0 +1,86 @@
+@startuml FraudSentry_Simplified_Overview
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #343A40
+
+title FraudSentry - Simplified System Overview
+
+package "Frontend (React)" #F3E5F5 {
+    class WebApp {
+        +Login/Authentication
+        +Dashboard
+        +Detection Engine
+        +History Viewer
+    }
+}
+
+package "Backend API (FastAPI)" #E3F2FD {
+    class APIServer {
+        +/predict
+        +/upload-batch
+        +/save-report
+        +/health
+        +/dashboard-stats
+    }
+}
+
+package "ML Engine" #FFF3E0 {
+    class FraudDetector {
+        +Random Forest Model
+        +XGBoost Model
+        +Isolation Forest
+        +Ensemble Scorer
+    }
+    
+    class AIExplainer {
+        +SHAP Analysis
+        +Gemini AI
+    }
+}
+
+package "Data Layer" #E8F5E9 {
+    class Database {
+        +SQLite
+        +Scan History
+    }
+    
+    class Reports {
+        +PDF Generator
+    }
+}
+
+' Relationships
+WebApp --> APIServer : HTTP/REST
+APIServer --> FraudDetector : Predict
+APIServer --> AIExplainer : Explain
+APIServer --> Database : Store/Retrieve
+APIServer --> Reports : Generate
+
+note right of FraudDetector
+  **3-Model Ensemble:**
+  • Random Forest (Precision)
+  • XGBoost (Sensitivity)
+  • Isolation Forest (Anomaly)
+  
+  **Risk Score Fusion:**
+  Weighted combination
+  Threshold: 0.5
+end note
+
+note right of AIExplainer
+  **Explainability:**
+  • SHAP values
+  • Natural language (Gemini)
+  • Fraud pattern detection
+end note
+
+note bottom of APIServer
+  **Model Consensus Tiers:**
+  • CRITICAL: Both agree (fraud)
+  • HIGH: RF only
+  • MODERATE: XGB only
+  • LOW: Both agree (safe)
+end note
+
+@enduml

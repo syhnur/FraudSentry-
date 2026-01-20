@@ -1,0 +1,140 @@
+@startuml FraudSentry_ML_Models
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #343A40
+
+title FraudSentry - Machine Learning Models Architecture
+
+package "ML Models" #FFF3E0 {
+    
+    class RandomForestModel {
+        +n_estimators: int = 100
+        +class_weight: str = "balanced"
+        +random_state: int = 42
+        --
+        +fit(X_train, y_train)
+        +predict(X): array
+        +predict_proba(X): array
+        --
+        <<fraud_model.joblib>>
+    }
+    
+    class XGBoostModel {
+        +scale_pos_weight: float
+        +n_estimators: int = 100
+        +max_depth: int = 6
+        +learning_rate: float = 0.1
+        --
+        +fit(X_train, y_train)
+        +predict(X): array
+        +predict_proba(X): array
+        --
+        <<fraud_model_xgboost.joblib>>
+    }
+    
+    class IsolationForestModel {
+        --
+        +fit(X_train)
+        +predict(X): array
+        --
+        <<isolation_forest.joblib>>
+        <<-1 = anomaly, 1 = normal>>
+    }
+    
+    class SHAPExplainer {
+        +explainer: TreeExplainer
+        --
+        +shap_values(X): array
+        --
+        <<Explains XGBoost>>
+    }
+    
+    class EnsembleRiskScorer {
+        +xgb_weight: float = 0.4
+        +rf_weight: float = 0.4
+        +iso_weight: float = 0.2
+        +threshold: float = 0.5
+        --
+        +calculate_ensemble_risk(): float
+        +get_ensemble_prediction(): int
+    }
+}
+
+package "Training & Evaluation" #E1F5FE {
+    
+    class ModelTrainer {
+        +train_random_forest(X, y): Model
+        +train_xgboost(X, y): Model
+        +train_isolation_forest(X): Model
+        +optimize_threshold(): float
+        --
+        <<train_model.py>>
+        <<train_xgboost.py>>
+    }
+    
+    class ModelEvaluator {
+        +evaluate_model(): dict
+        +generate_confusion_matrix(): array
+        +calculate_metrics(): dict
+        +generate_diagnostic_plots(): void
+        --
+        <<evaluate_model.py>>
+    }
+    
+    class BenchmarkSystem {
+        +measure_inference_time(): float
+        +measure_throughput(): float
+        +measure_latency_percentiles(): dict
+        +assess_scalability(): dict
+        --
+        <<benchmark_system.py>>
+    }
+}
+
+' Relationships
+SHAPExplainer --> XGBoostModel : explains
+
+EnsembleRiskScorer --> RandomForestModel : combines
+EnsembleRiskScorer --> XGBoostModel : combines
+EnsembleRiskScorer --> IsolationForestModel : combines
+
+ModelTrainer ..> RandomForestModel : creates
+ModelTrainer ..> XGBoostModel : creates
+ModelTrainer ..> IsolationForestModel : creates
+
+ModelEvaluator --> RandomForestModel : evaluates
+ModelEvaluator --> XGBoostModel : evaluates
+
+BenchmarkSystem --> RandomForestModel : benchmarks
+BenchmarkSystem --> XGBoostModel : benchmarks
+BenchmarkSystem --> IsolationForestModel : benchmarks
+
+note right of EnsembleRiskScorer
+  **Risk Score Fusion:**
+  final_risk = (XGB × 0.4) + 
+               (RF × 0.4) + 
+               (ISO × 0.2)
+  
+  Threshold: 0.5
+end note
+
+note bottom of RandomForestModel
+  **High Precision Model**
+  Balanced class weights
+  100 decision trees
+end note
+
+note bottom of XGBoostModel
+  **High Sensitivity Model**
+  Optimized threshold
+  Gradient boosting
+end note
+
+note bottom of IsolationForestModel
+  **Anomaly Detector**
+  Unsupervised learning
+  Detects outliers
+end note
+
+@enduml

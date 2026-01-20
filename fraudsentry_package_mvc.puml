@@ -1,0 +1,100 @@
+@startuml FraudSentry_Package_MVC
+!theme plain
+skinparam linetype polyline
+skinparam backgroundColor #FEFEFE
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam nodesep 10
+skinparam ranksep 20
+
+title FraudSentry - Three-Tier MVC Architecture
+
+' ============================================================================
+' PRESENTATION LAYER (VIEW)
+' ============================================================================
+package "Presentation Layer (View)" #E8EAF6 {
+    package "frontend/src" #F3E5F5 {
+        [App.jsx]
+        [InventoryLogin.jsx]
+        [DashboardView.jsx]
+        [DetectionView.jsx]
+        [HistoryView.jsx]
+    }
+}
+
+note top of "Presentation Layer (View)"
+  React + Vite | WebAuthn Auth
+end note
+
+' ============================================================================
+' BUSINESS LOGIC LAYER (CONTROLLER)
+' ============================================================================
+package "Business Logic Layer (Controller)" #E3F2FD {
+    
+    package "API (main.py)" #BBDEFB {
+        [FastAPI App]
+        [API Endpoints]
+        [FraudDetectionService]
+        [ModelConsensusService]
+    }
+    
+    package "ML Engine" #FFF3E0 {
+        [RandomForest]
+        [XGBoost]
+        [IsolationForest]
+        [EnsembleScorer]
+        [SHAP]
+    }
+    
+    package "External" #FCE4EC {
+        [Gemini AI]
+        [PDF Generator]
+    }
+}
+
+note top of "Business Logic Layer (Controller)"
+  7 REST Endpoints | 3-Model Ensemble
+  Risk = (XGB×0.4) + (RF×0.4) + (ISO×0.2)
+end note
+
+' ============================================================================
+' DATA LAYER (MODEL)
+' ============================================================================
+package "Data Layer (Model)" #E8F5E9 {
+    database "fraud_history.db" as DB
+    storage "Model Files" as Models {
+        fraud_model.joblib
+        fraud_model_xgboost.joblib
+        isolation_forest.joblib
+    }
+    folder "dataset/" as Dataset
+    folder "reports/" as Reports
+}
+
+note top of "Data Layer (Model)"
+  SQLite | Trained Models | Datasets
+end note
+
+' ============================================================================
+' RELATIONSHIPS
+' ============================================================================
+[App.jsx] -down-> [API Endpoints]
+[DashboardView.jsx] -down-> [API Endpoints]
+[DetectionView.jsx] -down-> [API Endpoints]
+
+[API Endpoints] -down-> [FraudDetectionService]
+[FraudDetectionService] -down-> [RandomForest]
+[FraudDetectionService] -down-> [XGBoost]
+[FraudDetectionService] -down-> [IsolationForest]
+[FraudDetectionService] -down-> [EnsembleScorer]
+[API Endpoints] -down-> [SHAP]
+[API Endpoints] --> [Gemini AI]
+[API Endpoints] --> [PDF Generator]
+
+[API Endpoints] -down-> DB
+[RandomForest] ..> Models
+[XGBoost] ..> Models
+[IsolationForest] ..> Models
+[PDF Generator] ..> Reports
+
+@enduml

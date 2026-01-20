@@ -1,0 +1,139 @@
+@startuml FraudSentry_Frontend
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #343A40
+
+title FraudSentry - Frontend Architecture (React)
+
+package "Frontend Components" #F3E5F5 {
+    
+    class App <<Component>> {
+        -isAuthenticated: bool
+        -userEmail: string
+        -currentPage: string
+        --
+        +handleLogout(): void
+        +handleLoginSuccess(email): void
+        +render(): JSX.Element
+    }
+    
+    class InventoryLogin <<Component>> {
+        -email: string
+        -password: string
+        -isLoading: bool
+        --
+        +handleLogin(e): void
+        +handleTouchIdLogin(): void
+        +render(): JSX.Element
+    }
+    
+    class DashboardView <<Component>> {
+        -stats: object
+        --
+        +fetchStats(): void
+        +render(): JSX.Element
+    }
+    
+    class DetectionView <<Component>> {
+        -formData: object
+        -csvFile: File
+        -result: object
+        -batchResults: array
+        --
+        +handleSinglePredict(): void
+        +handleBatchUpload(): void
+        +handleDownloadReport(): void
+        +render(): JSX.Element
+    }
+    
+    class HistoryView <<Component>> {
+        -history: array
+        --
+        +fetchHistory(): void
+        +render(): JSX.Element
+    }
+    
+    class SystemHealthStatus <<Component>> {
+        -healthData: object
+        --
+        +fetchHealthStatus(): void
+        +getHealthColor(status): string
+        +render(): JSX.Element
+    }
+    
+    class FraudTypeBreakdown <<Component>> {
+        -fraudData: array
+        --
+        +fetchFraudData(): void
+        +render(): JSX.Element
+    }
+    
+    class ModelComparisonCards <<Component>> {
+        +render(): JSX.Element
+    }
+    
+    class ProfileDropdown <<Component>> {
+        -isOpen: bool
+        +userEmail: string
+        --
+        +render(): JSX.Element
+    }
+}
+
+package "API Client" #E3F2FD {
+    class AxiosClient {
+        +baseURL: string
+        --
+        +post(endpoint, data): Promise
+        +get(endpoint): Promise
+    }
+}
+
+' Component Composition
+App *-- InventoryLogin
+App *-- DashboardView
+App *-- DetectionView
+App *-- HistoryView
+App *-- ProfileDropdown
+
+DashboardView *-- SystemHealthStatus
+DashboardView *-- FraudTypeBreakdown
+DashboardView *-- ModelComparisonCards
+
+' API Communication
+DetectionView --> AxiosClient : uses
+DashboardView --> AxiosClient : uses
+HistoryView --> AxiosClient : uses
+SystemHealthStatus --> AxiosClient : uses
+FraudTypeBreakdown --> AxiosClient : uses
+
+note right of App
+  **Main Container**
+  Manages authentication
+  and page routing
+end note
+
+note right of InventoryLogin
+  **Authentication:**
+  • Email/Password
+  • WebAuthn (Touch ID)
+  • Biometric support
+end note
+
+note right of DetectionView
+  **Core Features:**
+  • Single transaction scan
+  • Batch CSV upload
+  • PDF report generation
+  • False alarm marking
+end note
+
+note bottom of AxiosClient
+  **Backend API:**
+  http://localhost:8000
+  
+  Connects to FastAPI
+end note
+
+@enduml

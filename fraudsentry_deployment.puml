@@ -1,0 +1,125 @@
+@startuml FraudSentry_Deployment
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam nodesep 30
+skinparam ranksep 40
+
+title FraudSentry - Deployment Architecture
+
+' ============================================================================
+' CLIENT TIER
+' ============================================================================
+node "Client Device" as client #E8EAF6 {
+    component "Web Browser" as browser {
+        [React App]
+        [UI Components]
+    }
+}
+
+' ============================================================================
+' APPLICATION SERVER
+' ============================================================================
+node "Application Server\n(localhost:8000)" as appserver #E3F2FD {
+    component "FastAPI Server" as fastapi {
+        [API Endpoints]
+        [CORS Middleware]
+    }
+    
+    component "Business Logic" as logic {
+        [Fraud Detection Service]
+        [Model Consensus]
+        [Report Generator]
+    }
+    
+    component "ML Engine" as ml {
+        artifact "fraud_model.joblib" as rf_model
+        artifact "fraud_model_xgboost.joblib" as xgb_model
+        artifact "isolation_forest.joblib" as iso_model
+    }
+}
+
+' ============================================================================
+' DATA TIER
+' ============================================================================
+node "Data Storage" as storage #E8F5E9 {
+    database "fraud_history.db" as db {
+        [history]
+        [scan_records]
+    }
+    
+    folder "Generated Files" as files {
+        [PDF Reports]
+        [Visualizations]
+    }
+}
+
+' ============================================================================
+' EXTERNAL SERVICES
+' ============================================================================
+node "External Services" as external #FCE4EC {
+    component "Google Gemini AI" as gemini {
+        [gemini-2.5-flash-lite]
+    }
+}
+
+' ============================================================================
+' DEPLOYMENT RELATIONSHIPS
+' ============================================================================
+browser -down-> fastapi : "HTTP/REST\n(localhost:5173 → 8000)"
+fastapi -down-> logic : "delegates"
+logic -down-> ml : "loads & predicts"
+logic -right-> gemini : "API calls\n(explanations)"
+logic -down-> db : "query/insert"
+logic -down-> files : "generates"
+
+' ============================================================================
+' DEPLOYMENT NOTES
+' ============================================================================
+note right of client
+  **Technology:**
+  React 18 + Vite
+  
+  **Port:** 5173
+  **Auth:** WebAuthn
+end note
+
+note right of appserver
+  **Runtime:**
+  Python 3.9+
+  FastAPI + Uvicorn
+  
+  **Port:** 8000
+  **Models:** Loaded at startup
+end note
+
+note right of storage
+  **Database:**
+  SQLite (local)
+  
+  **Persistence:**
+  Scan history
+  Audit logs
+end note
+
+note left of external
+  **API Integration:**
+  Gemini AI
+  
+  **Purpose:**
+  Natural language
+  fraud explanations
+end note
+
+' ============================================================================
+' LEGEND
+' ============================================================================
+legend bottom
+  |= Component |= Description |
+  | Client | Web browser running React SPA |
+  | App Server | FastAPI backend with ML models |
+  | Data Storage | SQLite database + file storage |
+  | External | Google Gemini AI service |
+endlegend
+
+@enduml

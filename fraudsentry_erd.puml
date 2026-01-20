@@ -1,0 +1,187 @@
+@startuml FraudSentry_ERD
+!theme plain
+skinparam linetype ortho
+skinparam backgroundColor #FEFEFE
+skinparam roundcorner 5
+
+title FraudSentry - Entity Relationship Diagram
+
+' ============================================================================
+' ENTITIES
+' ============================================================================
+
+entity "Transaction" as transaction {
+  * **transaction_id** : INTEGER <<PK>>
+  --
+  * amount : DECIMAL
+  * oldbalanceOrg : DECIMAL
+  * newbalanceOrig : DECIMAL
+  * oldbalanceDest : DECIMAL
+  * newbalanceDest : DECIMAL
+  type : VARCHAR
+  timestamp : DATETIME
+}
+
+entity "Prediction Result" as prediction {
+  * **prediction_id** : INTEGER <<PK>>
+  * transaction_id : INTEGER <<FK>>
+  --
+  is_fraud : BOOLEAN
+  risk_score : DECIMAL
+  model_used : VARCHAR
+  xgb_prediction : BOOLEAN
+  rf_prediction : BOOLEAN
+  iso_anomaly : BOOLEAN
+  ensemble_risk_score : DECIMAL
+  model_consensus : VARCHAR
+  fraud_type : VARCHAR
+  created_at : DATETIME
+}
+
+entity "SHAP Explanation" as shap {
+  * **explanation_id** : INTEGER <<PK>>
+  * prediction_id : INTEGER <<FK>>
+  --
+  amount_impact : DECIMAL
+  oldbalanceOrg_impact : DECIMAL
+  newbalanceOrig_impact : DECIMAL
+  oldbalanceDest_impact : DECIMAL
+  newbalanceDest_impact : DECIMAL
+  top_feature : VARCHAR
+}
+
+entity "AI Analysis" as ai_analysis {
+  * **analysis_id** : INTEGER <<PK>>
+  * prediction_id : INTEGER <<FK>>
+  --
+  gemini_response : TEXT
+  analysis_type : VARCHAR
+  confidence_level : VARCHAR
+  created_at : DATETIME
+}
+
+entity "Scan History" as history {
+  * **id** : INTEGER <<PK>>
+  --
+  scan_date : DATETIME
+  filename : VARCHAR
+  total_scanned : INTEGER
+  fraud_found_xgb : INTEGER
+  fraud_found_rf : INTEGER
+  fraud_found_iso : INTEGER
+  ensemble_flags : INTEGER
+  unanimous_agreement : INTEGER
+}
+
+entity "Batch Scan" as batch {
+  * **batch_id** : INTEGER <<PK>>
+  * history_id : INTEGER <<FK>>
+  --
+  upload_timestamp : DATETIME
+  file_path : VARCHAR
+  status : VARCHAR
+  total_transactions : INTEGER
+}
+
+entity "Report" as report {
+  * **report_id** : INTEGER <<PK>>
+  * history_id : INTEGER <<FK>>
+  --
+  report_filename : VARCHAR
+  generation_date : DATETIME
+  confirmed_frauds_count : INTEGER
+  false_alarms_count : INTEGER
+  pdf_path : VARCHAR
+}
+
+entity "Fraud Pattern" as fraud_pattern {
+  * **pattern_id** : INTEGER <<PK>>
+  * prediction_id : INTEGER <<FK>>
+  --
+  pattern_type : VARCHAR
+  detection_method : VARCHAR
+  confidence : DECIMAL
+  --
+  <<Pattern Types>>
+  Account Takeover
+  Mule Account
+  Structuring
+  Account Draining
+  Rapid Transfer
+}
+
+entity "User Session" as user_session {
+  * **session_id** : INTEGER <<PK>>
+  --
+  user_email : VARCHAR
+  login_timestamp : DATETIME
+  logout_timestamp : DATETIME
+  auth_method : VARCHAR
+  is_active : BOOLEAN
+}
+
+entity "System Health Log" as health_log {
+  * **log_id** : INTEGER <<PK>>
+  --
+  check_timestamp : DATETIME
+  database_status : VARCHAR
+  ai_engine_status : VARCHAR
+  models_loaded : BOOLEAN
+  last_sync : DATETIME
+}
+
+' ============================================================================
+' RELATIONSHIPS
+' ============================================================================
+
+transaction ||--o{ prediction : "generates"
+prediction ||--|| shap : "has"
+prediction ||--o| ai_analysis : "has"
+prediction ||--o| fraud_pattern : "detected by"
+
+history ||--o{ batch : "contains"
+history ||--o| report : "generates"
+batch ||--o{ transaction : "includes"
+
+user_session ||--o{ batch : "initiates"
+user_session ||--o{ report : "requests"
+
+' ============================================================================
+' NOTES
+' ============================================================================
+
+note right of prediction
+  **Model Consensus Logic:**
+  • CRITICAL RISK: Both models agree (fraud)
+  • HIGH RISK: RF only (high precision)
+  • MODERATE RISK: XGB only (high sensitivity)
+  • LOW RISK: Both agree (safe)
+  
+  **Ensemble Score:**
+  (XGB × 0.4) + (RF × 0.4) + (ISO × 0.2)
+end note
+
+note left of transaction
+  **Core Features:**
+  5 numerical features used
+  for fraud detection:
+  • Transaction amount
+  • Sender balances (old/new)
+  • Receiver balances (old/new)
+end note
+
+note bottom of fraud_pattern
+  **Detection Methods:**
+  • Rule-based (thresholds)
+  • SHAP-based (feature importance)
+  • Ensemble-based (risk score)
+end note
+
+note top of history
+  **Audit Trail:**
+  Tracks all batch scans
+  for compliance and
+  historical analysis
+end note
+
+@enduml

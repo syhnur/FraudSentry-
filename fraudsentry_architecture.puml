@@ -1,0 +1,468 @@
+@startuml FraudSentry_Architecture
+!theme plain
+skinparam linetype ortho
+skinparam backgroundColor #FEFEFE
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #343A40
+skinparam arrowColor #495057
+
+title FraudSentry - Comprehensive System Architecture
+
+' ============================================================================
+' BACKEND - FastAPI Application Layer
+' ============================================================================
+package "Backend API (FastAPI)" #E3F2FD {
+    
+    class FastAPIApp {
+        +title: str = "FraudSentry API"
+        +middleware: CORSMiddleware
+        --
+        +add_middleware()
+    }
+    
+    class Transaction <<Pydantic Model>> {
+        +amount: float
+        +oldbalanceOrg: float
+        +newbalanceOrig: float
+        +oldbalanceDest: float
+        +newbalanceDest: float
+    }
+    
+    class ReportRequest <<Pydantic Model>> {
+        +filename: str
+        +total: int
+        +xgb_fraud: int
+        +rf_fraud: int
+        +confirmed_frauds: List[dict]
+        +false_alarms: List[dict]
+    }
+    
+    class APIEndpoints {
+        +predict_fraud(transaction: Transaction, model_type: str): dict
+        +upload_batch(file: UploadFile): dict
+        +save_report(request: ReportRequest): FileResponse
+        +get_history(): List[dict]
+        +get_dashboard_stats(): dict
+        +health_check(): dict
+        +get_fraud_type_stats(): dict
+        --
+        -get_model_consensus(xgb_pred, rf_pred): dict
+    }
+    
+    class FraudDetectionService {
+        +detect_account_takeover(row: dict): bool
+        +detect_mule_account(row: dict): bool
+        +detect_structuring(row: dict): bool
+        +detect_fraud_type_from_shap(row: dict, shap_values): str
+        +generate_fraud_reason(row: dict): str
+    }
+    
+    class UtilityFunctions {
+        +format_relative_time(dt: datetime): str
+    }
+}
+
+' ============================================================================
+' MACHINE LEARNING MODELS
+' ============================================================================
+package "ML Models & Training" #FFF3E0 {
+    
+    class RandomForestModel {
+        +n_estimators: int = 100
+        +class_weight: str = "balanced"
+        +random_state: int = 42
+        +n_jobs: int = -1
+        --
+        +fit(X_train, y_train)
+        +predict(X): array
+        +predict_proba(X): array
+        --
+        <<Serialized: fraud_model.joblib>>
+    }
+    
+    class XGBoostModel {
+        +scale_pos_weight: float
+        +n_estimators: int = 100
+        +max_depth: int = 6
+        +learning_rate: float = 0.1
+        +random_state: int = 42
+        +n_jobs: int = -1
+        --
+        +fit(X_train, y_train)
+        +predict(X): array
+        +predict_proba(X): array
+        --
+        <<Serialized: fraud_model_xgboost.joblib>>
+    }
+    
+    class IsolationForestModel {
+        --
+        +fit(X_train)
+        +predict(X): array
+        --
+        <<Serialized: isolation_forest.joblib>>
+        <<Returns: -1 = anomaly, 1 = normal>>
+    }
+    
+    class SHAPExplainer {
+        +explainer: TreeExplainer
+        --
+        +shap_values(X): array
+        --
+        <<Explains XGBoost predictions>>
+    }
+    
+    class EnsembleRiskScorer {
+        +xgb_weight: float = 0.4
+        +rf_weight: float = 0.4
+        +iso_weight: float = 0.2
+        +threshold: float = 0.5
+        --
+        +calculate_ensemble_risk(xgb_prob, rf_prob, iso_score): float
+        +get_ensemble_prediction(ensemble_risk): int
+    }
+    
+    class ModelTrainer {
+        +train_random_forest(X, y): RandomForestModel
+        +train_xgboost(X, y): XGBoostModel
+        +train_isolation_forest(X): IsolationForestModel
+        +optimize_threshold(model, X_test, y_test): float
+        --
+        <<Scripts: train_model.py, train_xgboost.py>>
+    }
+    
+    class ModelEvaluator {
+        +evaluate_model(model, X_test, y_test): dict
+        +generate_confusion_matrix(y_test, y_pred): array
+        +calculate_metrics(y_test, y_pred): dict
+        +generate_diagnostic_plots(): void
+        --
+        <<Scripts: evaluate_model.py, evaluate_kaggle_real.py>>
+    }
+    
+    class BenchmarkSystem {
+        +measure_inference_time(): float
+        +measure_throughput(batch_size): float
+        +measure_latency_percentiles(): dict
+        +assess_scalability(): dict
+        --
+        <<Script: benchmark_system.py>>
+    }
+}
+
+' ============================================================================
+' DATABASE LAYER
+' ============================================================================
+package "Database Layer" #E8F5E9 {
+    
+    class DatabaseManager {
+        +db_path: str = "fraud_history.db"
+        --
+        +init_db(): void
+        +get_connection(): Connection
+    }
+    
+    class HistoryTable {
+        +id: INTEGER PRIMARY KEY AUTOINCREMENT
+        +scan_date: TEXT
+        +filename: TEXT
+        +total_scanned: INTEGER
+        +fraud_found_xgb: INTEGER
+        +fraud_found_rf: INTEGER
+        --
+        +insert_record(scan_data): void
+        +fetch_all_records(): List[dict]
+        +fetch_latest_record(): dict
+    }
+}
+
+' ============================================================================
+' EXTERNAL SERVICES
+' ============================================================================
+package "External Services" #FCE4EC {
+    
+    class GeminiAIService {
+        +api_key: str
+        +model: GenerativeModel = "gemini-2.5-flash-lite"
+        --
+        +configure(api_key: str): void
+        +generate_content(prompt: str): str
+        +analyze_fraud_transaction(transaction, factors, consensus): str
+        +analyze_safe_transaction(transaction, factors, consensus): str
+    }
+    
+    class PDFReportGenerator {
+        +pdf: FPDF
+        --
+        +create_report(report_data): void
+        +add_header(date: str): void
+        +add_summary_box(stats): void
+        +add_fraud_table(frauds: List[dict]): void
+        +add_false_alarm_table(alarms: List[dict]): void
+        +save(filename: str): void
+    }
+}
+
+' ============================================================================
+' FRONTEND - React Application
+' ============================================================================
+package "Frontend (React + Vite)" #F3E5F5 {
+    
+    class App <<Component>> {
+        -isAuthenticated: bool
+        -userEmail: string
+        -currentPage: string
+        --
+        +handleLogout(): void
+        +handleLoginSuccess(email): void
+        +render(): JSX.Element
+    }
+    
+    class InventoryLogin <<Component>> {
+        -email: string
+        -password: string
+        -isLoading: bool
+        -error: string
+        --
+        +handleLogin(e): void
+        +handleTouchIdLogin(): void
+        +generateRandomBuffer(size): ArrayBuffer
+        +bufferToBase64(buffer): string
+        +base64ToBuffer(base64): ArrayBuffer
+        +render(): JSX.Element
+    }
+    
+    class DashboardView <<Component>> {
+        -stats: object
+        --
+        +fetchStats(): void
+        +render(): JSX.Element
+    }
+    
+    class DetectionView <<Component>> {
+        -formData: object
+        -csvFile: File
+        -result: object
+        -batchResults: array
+        -loading: bool
+        --
+        +handleChange(e): void
+        +handleSinglePredict(): void
+        +handleFileChange(e): void
+        +handleBatchUpload(): void
+        +analyzeRow(tx, rowIndex): void
+        +getPriorityLevel(row): string
+        +handleMarkFalseAlarm(rowIndex): void
+        +handleDownloadReport(): void
+        +render(): JSX.Element
+    }
+    
+    class HistoryView <<Component>> {
+        -history: array
+        --
+        +fetchHistory(): void
+        +render(): JSX.Element
+    }
+    
+    class SystemHealthStatus <<Component>> {
+        -healthData: object
+        -loading: bool
+        --
+        +fetchHealthStatus(): void
+        +getHealthColor(status): string
+        +render(): JSX.Element
+    }
+    
+    class FraudTypeBreakdown <<Component>> {
+        -fraudData: array
+        -loading: bool
+        --
+        +fetchFraudData(): void
+        +getDefaultFraudData(): array
+        +render(): JSX.Element
+    }
+    
+    class ModelComparisonCards <<Component>> {
+        +render(): JSX.Element
+    }
+    
+    class ProfileDropdown <<Component>> {
+        -isOpen: bool
+        +userEmail: string
+        +onLogout: function
+        --
+        +render(): JSX.Element
+    }
+    
+    class AxiosClient {
+        +baseURL: string = "http://localhost:8000"
+        --
+        +post(endpoint, data): Promise
+        +get(endpoint): Promise
+    }
+}
+
+' ============================================================================
+' DATA MODELS & STRUCTURES
+' ============================================================================
+package "Data Models" #FFF9C4 {
+    
+    class TransactionData {
+        +amount: float
+        +oldbalanceOrg: float
+        +newbalanceOrig: float
+        +oldbalanceDest: float
+        +newbalanceDest: float
+        +isFraud: int
+        +type: string
+    }
+    
+    class PredictionResult {
+        +is_fraud: int
+        +risk_score: float
+        +model_used: string
+        +xgb_prediction: int
+        +rf_prediction: int
+        +model_consensus: string
+        +message: string
+        +explanation: List[dict]
+        +ai_analysis: string
+    }
+    
+    class BatchResult {
+        +stats: dict
+        +top_risky_transactions: List[dict]
+    }
+    
+    class BatchStats {
+        +total_scanned: int
+        +rf_flags: int
+        +xgb_flags: int
+        +iso_anomalies: int
+        +ensemble_flags: int
+        +unanimous_agreement: int
+    }
+    
+    class HealthStatus {
+        +database_status: string
+        +ai_engine_status: string
+        +last_sync: string
+        +system_check_time: string
+    }
+    
+    class FraudTypeStats {
+        +fraud_types: List[dict]
+        +total_frauds: int
+    }
+}
+
+' ============================================================================
+' RELATIONSHIPS - Backend
+' ============================================================================
+FastAPIApp *-- APIEndpoints
+APIEndpoints ..> Transaction : uses
+APIEndpoints ..> ReportRequest : uses
+APIEndpoints --> FraudDetectionService : delegates
+APIEndpoints --> RandomForestModel : loads
+APIEndpoints --> XGBoostModel : loads
+APIEndpoints --> IsolationForestModel : loads
+APIEndpoints --> SHAPExplainer : uses
+APIEndpoints --> EnsembleRiskScorer : uses
+APIEndpoints --> GeminiAIService : calls
+APIEndpoints --> PDFReportGenerator : generates
+APIEndpoints --> DatabaseManager : queries
+APIEndpoints ..> UtilityFunctions : uses
+
+FraudDetectionService ..> TransactionData : analyzes
+
+DatabaseManager *-- HistoryTable
+
+SHAPExplainer --> XGBoostModel : explains
+
+EnsembleRiskScorer --> RandomForestModel : combines
+EnsembleRiskScorer --> XGBoostModel : combines
+EnsembleRiskScorer --> IsolationForestModel : combines
+
+ModelTrainer ..> RandomForestModel : creates
+ModelTrainer ..> XGBoostModel : creates
+ModelTrainer ..> IsolationForestModel : creates
+
+ModelEvaluator --> RandomForestModel : evaluates
+ModelEvaluator --> XGBoostModel : evaluates
+ModelEvaluator --> IsolationForestModel : evaluates
+
+BenchmarkSystem --> RandomForestModel : benchmarks
+BenchmarkSystem --> XGBoostModel : benchmarks
+BenchmarkSystem --> IsolationForestModel : benchmarks
+
+' ============================================================================
+' RELATIONSHIPS - Frontend
+' ============================================================================
+App *-- InventoryLogin
+App *-- DashboardView
+App *-- DetectionView
+App *-- HistoryView
+App *-- ProfileDropdown
+
+DashboardView *-- SystemHealthStatus
+DashboardView *-- FraudTypeBreakdown
+DashboardView *-- ModelComparisonCards
+
+DetectionView --> AxiosClient : uses
+DashboardView --> AxiosClient : uses
+HistoryView --> AxiosClient : uses
+SystemHealthStatus --> AxiosClient : uses
+FraudTypeBreakdown --> AxiosClient : uses
+
+' ============================================================================
+' RELATIONSHIPS - API Communication
+' ============================================================================
+AxiosClient ..> APIEndpoints : HTTP requests
+APIEndpoints ..> PredictionResult : returns
+APIEndpoints ..> BatchResult : returns
+APIEndpoints ..> HealthStatus : returns
+APIEndpoints ..> FraudTypeStats : returns
+
+BatchResult *-- BatchStats
+
+' ============================================================================
+' NOTES
+' ============================================================================
+note right of EnsembleRiskScorer
+  **Risk Score Fusion Formula:**
+  final_risk = (XGB × 0.4) + (RF × 0.4) + (ISO × 0.2)
+  Threshold: 0.5 for fraud classification
+end note
+
+note right of FraudDetectionService
+  **Fraud Pattern Detection:**
+  • Account Takeover (ATO)
+  • Mule Account
+  • Structuring
+  • Account Draining
+  • Rapid Transfer
+end note
+
+note right of GeminiAIService
+  **AI Analysis:**
+  Provides natural language explanations
+  for both fraud and safe transactions
+  using model consensus context
+end note
+
+note bottom of APIEndpoints
+  **Model Consensus Tiers:**
+  • CRITICAL RISK: Both models agree (fraud)
+  • HIGH RISK: RF only (high precision)
+  • MODERATE RISK: XGB only (potential false alarm)
+  • LOW RISK: Both agree (safe)
+end note
+
+note top of InventoryLogin
+  **Authentication Methods:**
+  • Email/Password
+  • WebAuthn (Touch ID/Face ID)
+  • Biometric authentication support
+end note
+
+@enduml
